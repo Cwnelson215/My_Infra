@@ -150,3 +150,114 @@ Apps receive these from the platform:
 - `DATABASE_URL` - Connection string for app's database
 - `AWS_REGION` - Current region
 - Custom variables defined per-app in Pulumi config
+
+## Adding a New Application (Step-by-Step)
+
+### Step 1: Copy the example app
+
+```bash
+cp -r apps/example-app apps/my-app
+```
+
+This gives you the full scaffold: Pulumi project files, a `Dockerfile`, infrastructure code (`index.ts`), and a sample Node.js app in `src/`.
+
+### Step 2: Update the Pulumi project name
+
+Edit `apps/my-app/Pulumi.yaml`:
+
+```yaml
+name: my-app
+runtime: nodejs
+description: My application deployed on the portfolio platform
+```
+
+### Step 3: Update the stack configuration
+
+Edit `apps/my-app/Pulumi.dev.yaml` to set your app's name, subdomain, and any resource overrides:
+
+```yaml
+config:
+  aws:region: us-east-1
+  my-app:appName: my-app
+  my-app:subdomain: my-app                                    # becomes my-app.yourdomain.com
+  my-app:platformStack: organization/portfolio-platform/dev    # reference to the shared platform stack
+  my-app:cpu: "256"
+  my-app:memory: "512"
+  my-app:desiredCount: "1"
+  my-app:containerPort: "3000"
+  my-app:useFargateSpot: "true"
+```
+
+The `platformStack` value is how your app imports shared resources (VPC, ALB, ECS cluster, DNS zone, certificates) from the platform via Pulumi's `StackReference`.
+
+### Step 4: Replace the application code
+
+Swap out the `src/` directory and `Dockerfile` with your actual application. The infrastructure is language-agnostic -- use Node.js, Python, Go, a static site behind nginx, or anything else that runs in a container. Your app must satisfy two contracts:
+
+1. Listen on the configured `containerPort` (default `3000`)
+2. Expose a `GET /health` endpoint that returns HTTP `200` when healthy
+
+### Step 5: Install dependencies and initialize the stack
+
+```bash
+cd apps/my-app
+npm install
+pulumi stack init my-app-dev
+```
+
+### Step 6: Deploy
+
+```bash
+pulumi up
+```
+
+This creates all the app-specific AWS resources:
+
+- **ECR repository** -- stores your Docker images (`portfolio/my-app`)
+- **Security group** -- allows inbound traffic from the ALB on your container port
+- **ALB target group** -- health-checked target for your ECS tasks
+- **ALB listener rule** -- routes `my-app.yourdomain.com` to your target group via host-based routing
+- **ECS task definition** -- container config, environment variables, log configuration, health check
+- **ECS service** -- runs your container on Fargate (Spot by default), wired to the ALB
+
+### Step 7: Create a GitHub Actions workflow
+
+Add `.github/workflows/my-app.yml` to automate deployments on push:
+
+```yaml
+name: Deploy My App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/my-app/**'
+      - '.github/workflows/my-app.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/app-deploy.yml
+    with:
+      app-name: my-app
+      environment: ${{ github.event.inputs.environment || 'dev' }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+```
+
+This calls the reusable `app-deploy.yml` workflow, which handles: building and pushing the Docker image to ECR, running `pulumi up` for infrastructure, forcing an ECS service redeployment, and printing the app URL.
+
+### Step 8: Push and iterate
+
+Commit your new app directory and workflow file. From this point on, any push to `main` that touches `apps/my-app/**` will automatically build, push, and deploy your application.
