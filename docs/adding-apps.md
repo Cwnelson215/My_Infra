@@ -474,6 +474,238 @@ export const serviceName = service.name;
 export const serviceArn = service.id;
 ```
 
+## Template: `README.md`
+
+```markdown
+# my-app
+
+A containerized application deployed on the portfolio platform via Pulumi.
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 20
+- [Docker](https://www.docker.com/)
+- [Pulumi CLI](https://www.pulumi.com/docs/install/)
+- AWS credentials configured (`aws configure` or environment variables)
+
+## Local Development
+
+```bash
+npm install
+npm run dev
+```
+
+The app listens on `http://localhost:3000` by default. Health check: `GET /health`.
+
+## Project Structure
+
+```
+my-app/
+├── src/                  # Application source code
+├── index.ts              # Pulumi infrastructure definition
+├── Pulumi.yaml           # Pulumi project metadata
+├── Pulumi.dev.yaml       # Stack config (dev environment)
+├── Dockerfile            # Container build definition
+├── package.json
+├── tsconfig.json
+└── .github/
+    └── workflows/
+        └── deploy.yml    # CI/CD deploy workflow
+```
+
+## Infrastructure
+
+This app deploys onto a shared platform (VPC, ALB, ECS cluster, RDS) managed in the [portfolio-infra](https://github.com/YOUR_ORG/portfolio-infra) repo. This repo only defines app-specific resources: ECR repo, security group, ALB target group/listener rule, and ECS task definition/service.
+
+The platform stack is referenced via Pulumi `StackReference` — see `index.ts`.
+
+### Pulumi Commands
+
+```bash
+npm run build       # Compile TypeScript
+npm run preview     # Preview infrastructure changes
+npm run up          # Deploy infrastructure
+npm run destroy     # Tear down infrastructure
+```
+
+### Configuration
+
+Stored in `Pulumi.dev.yaml`. Key values:
+
+| Key | Description |
+|-----|-------------|
+| `appName` | Application name used for all resources |
+| `subdomain` | Subdomain (becomes `subdomain.yourdomain.com`) |
+| `platformStack` | Reference to the shared platform stack |
+| `cpu` / `memory` | Fargate resource allocation |
+| `containerPort` | Port the container listens on (default 3000) |
+
+## Deployment
+
+Push to `main` triggers the GitHub Actions workflow which:
+
+1. Builds the Docker image
+2. Pushes to ECR
+3. Runs `pulumi up` to ensure infrastructure is current
+4. Forces an ECS service update to pull the new image
+
+Required GitHub repo secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `PULUMI_ACCESS_TOKEN`.
+
+## Monitoring
+
+```bash
+aws logs tail /ecs/portfolio-dev/my-app --follow
+```
+```
+
+## Template: `CLAUDE.md`
+
+```markdown
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What This Repo Is
+
+A containerized web application deployed on the portfolio platform. Infrastructure is defined with Pulumi (TypeScript) and references shared AWS resources (VPC, ALB, ECS cluster, RDS) from the platform stack via `pulumi.StackReference`.
+
+## Commands
+
+```bash
+# Application
+npm install           # Install dependencies
+npm run dev           # Run locally (http://localhost:3000)
+npm run build         # Build for production
+npm start             # Start production server
+
+# Infrastructure (Pulumi)
+npm run preview       # Preview infra changes
+npm run up            # Deploy infra
+npm run destroy       # Tear down infra
+```
+
+## Architecture
+
+**App contract:** The container must (1) listen on the configured port (default 3000) and (2) expose `GET /health` returning HTTP 200.
+
+**Infrastructure (`index.ts`):** Defines app-specific AWS resources:
+- ECR repository (`portfolio/{appName}`) with lifecycle policy (keep last 10 images)
+- Security group allowing traffic from the shared ALB
+- ALB target group + host-based listener rule (`subdomain.domain.com`)
+- ECS Fargate task definition + service (Fargate Spot by default)
+- Optional scheduled scaling (scale to zero at night)
+
+All shared resources (VPC, ALB, ECS cluster, Route53, ACM, CloudWatch log group, RDS) come from the platform stack and are imported via `pulumi.StackReference`.
+
+## Key Files
+
+- `src/` — Application source code
+- `index.ts` — Pulumi infrastructure definition
+- `Pulumi.yaml` — Project metadata
+- `Pulumi.dev.yaml` — Environment config (appName, subdomain, platformStack, cpu, memory, etc.)
+- `Dockerfile` — Multi-stage container build
+- `.github/workflows/deploy.yml` — CI/CD pipeline
+
+## Conventions
+
+- **Naming:** Resources prefixed with `appName`. All tagged with Project, App, ManagedBy.
+- **Config:** Environment-specific values in `Pulumi.{stack}.yaml`. Secrets via `pulumi config set --secret`.
+- **Logs:** CloudWatch at `/ecs/portfolio-{env}/{appName}`, 14-day retention.
+- **Platform stack reference format:** `organization/portfolio-platform/{environment}`
+- **Health check:** `GET /health` must return HTTP 200 — this is used by both the ALB target group and the ECS container health check.
+```
+
+## Template: `Dockerfile`
+
+This is a multi-stage Node.js Dockerfile. Adapt the build steps for your framework (Next.js, Express, Fastify, etc.).
+
+```dockerfile
+# ---- Build stage ----
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# ---- Production stage ----
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create non-root user
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 appuser
+
+COPY --from=builder /app/package.json /app/package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --from=builder /app/dist ./dist
+
+USER appuser
+
+EXPOSE 3000
+
+CMD ["node", "dist/index.js"]
+```
+
+**Key points:**
+- Multi-stage build keeps the final image small (no dev dependencies or source)
+- Runs as a non-root user for security
+- Exposes port 3000 (must match `containerPort` in Pulumi config)
+- Your app entry point (`dist/index.js`) must serve `GET /health` returning 200
+
+If you're serving a static site (e.g., React/Vite SPA), use nginx instead:
+
+```dockerfile
+# ---- Build stage ----
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# ---- Production stage ----
+FROM nginx:alpine AS runner
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+With a corresponding `nginx.conf`:
+
+```nginx
+server {
+    listen 3000;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location /health {
+        access_log off;
+        return 200 'ok';
+        add_header Content-Type text/plain;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
 ## Template: GitHub Actions Deploy Workflow
 
 Create `.github/workflows/deploy.yml` in your app repo. This is a self-contained workflow -- no cross-repo reusable workflow references needed.
