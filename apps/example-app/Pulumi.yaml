@@ -1,0 +1,3 @@
+name: example-app
+runtime: nodejs
+description: Example application deployed on the portfolio platform

@@ -1,0 +1,117 @@
+name: Deploy App
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        required: true
+        type: string
+        description: 'Name of the app to deploy'
+      environment:
+        required: false
+        type: string
+        default: 'dev'
+        description: 'Environment to deploy to'
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      PULUMI_ACCESS_TOKEN:
+        required: true
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      app-name:
+        required: true
+        type: string
+        description: 'Name of the app to deploy'
+      environment:
+        required: false
+        type: string
+        default: 'dev'
+        description: 'Environment to deploy to'
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy ${{ inputs.app-name }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/${{ inputs.app-name }}/package-lock.json
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR Repository URL
+        id: ecr-url
+        working-directory: apps/${{ inputs.app-name }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          npm ci
+          ECR_URL=$(pulumi stack output ecrRepositoryUrl --stack ${{ inputs.app-name }}-${{ inputs.environment }} 2>/dev/null || echo "")
+          if [ -z "$ECR_URL" ]; then
+            echo "ECR repository not found. Running pulumi up first..."
+            pulumi up --yes --stack ${{ inputs.app-name }}-${{ inputs.environment }}
+            ECR_URL=$(pulumi stack output ecrRepositoryUrl --stack ${{ inputs.app-name }}-${{ inputs.environment }})
+          fi
+          echo "ecr-url=$ECR_URL" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        working-directory: apps/${{ inputs.app-name }}
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: portfolio/${{ inputs.app-name }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Deploy Infrastructure
+        uses: pulumi/actions@v5
+        with:
+          command: up
+          stack-name: ${{ inputs.app-name }}-${{ inputs.environment }}
+          work-dir: apps/${{ inputs.app-name }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+      - name: Force ECS Service Update
+        run: |
+          aws ecs update-service \
+            --cluster portfolio-${{ inputs.environment }}-cluster \
+            --service ${{ inputs.app-name }} \
+            --force-new-deployment
+
+      - name: Output App URL
+        working-directory: apps/${{ inputs.app-name }}
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          APP_URL=$(pulumi stack output appUrl --stack ${{ inputs.app-name }}-${{ inputs.environment }})
+          echo "### Deployment Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App URL:** $APP_URL" >> $GITHUB_STEP_SUMMARY
