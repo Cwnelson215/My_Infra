@@ -1,6 +1,8 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
+// Tailscale subnet router for VPC access via Tailscale network
+
 export interface TailscaleSubnetRouterArgs {
   vpcId: pulumi.Output<string>;
   subnetId: pulumi.Output<string>;
