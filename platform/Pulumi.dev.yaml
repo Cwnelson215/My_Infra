@@ -1,0 +1,10 @@
+config:
+  aws:region: us-east-1
+  portfolio-platform:domainName: cwnel.com
+  portfolio-platform:environment: dev
+  # RDS settings - use free tier eligible instance
+  portfolio-platform:dbInstanceClass: db.t4g.micro
+  portfolio-platform:dbAllocatedStorage: "20"
+  # Set to false to skip RDS and reduce costs further
+  portfolio-platform:enableSharedDatabase: "true"
+  portfolio-platform:enableTailscale: "true"

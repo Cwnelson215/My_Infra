@@ -1,5 +1,4 @@
 node_modules/
 dist/
-Pulumi.*.yaml
 .pulumi/
 CLAUDE.md
