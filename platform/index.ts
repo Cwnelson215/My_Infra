@@ -6,6 +6,7 @@ import { createDns } from "./dns";
 import { createAlb } from "./alb";
 import { createEcsCluster } from "./ecs";
 import { createRds } from "./rds";
+import { createTailscaleSubnetRouter } from "./tailscale";
 
 // Configuration
 const config = new pulumi.Config();
@@ -14,6 +15,8 @@ const domainName = config.require("domainName");
 const enableSharedDatabase = config.getBoolean("enableSharedDatabase") ?? true;
 const dbInstanceClass = config.get("dbInstanceClass") || "db.t4g.micro";
 const dbAllocatedStorage = parseInt(config.get("dbAllocatedStorage") || "20");
+const enableTailscale = config.getBoolean("enableTailscale") ?? false;
+const tailscaleAuthKeySecretName = config.get("tailscaleAuthKeySecretName") || "portfolio/tailscale-auth-key";
 
 // Naming and tagging
 const projectName = "portfolio";
@@ -58,6 +61,23 @@ if (enableSharedDatabase) {
     allowedSecurityGroupIds: [vpc.defaultSecurityGroupId],
     instanceClass: dbInstanceClass,
     allocatedStorage: dbAllocatedStorage,
+    tags,
+  });
+}
+
+// =============================================================================
+// Optional: Tailscale Subnet Router
+// =============================================================================
+
+let tailscale: ReturnType<typeof createTailscaleSubnetRouter> | undefined;
+
+if (enableTailscale) {
+  tailscale = createTailscaleSubnetRouter(name, {
+    vpcId: vpc.vpcId,
+    subnetId: vpc.publicSubnetIds[0], // Place in first public subnet
+    advertisedRoutes: ["10.0.0.0/16"], // Entire VPC
+    authKeySecretName: tailscaleAuthKeySecretName,
+    instanceType: "t4g.nano",
     tags,
   });
 }
@@ -110,6 +130,13 @@ export const dbSecurityGroupId = rds?.dbSecurityGroupId;
 
 // Logs
 export const logGroupName = logGroup.name;
+
+// Tailscale (optional)
+export const tailscaleInstanceId = tailscale?.instanceId;
+export const tailscalePrivateIp = tailscale?.privateIp;
+export const tailscalePublicIp = tailscale?.publicIp;
+export const tailscaleSecurityGroupId = tailscale?.securityGroupId;
+export const tailscaleAuthKeySecretArn = tailscale?.authKeySecretArn;
 
 // Metadata
 export { environment, domainName };
