@@ -1,0 +1,7 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Cwnelson215/renovate-config"
+  ],
+  "ignorePaths": ["**/Dockerfile"]
+}
