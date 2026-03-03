@@ -7,4 +7,4 @@ config:
   portfolio-platform:dbAllocatedStorage: "20"
   # Set to false to skip RDS and reduce costs further
   portfolio-platform:enableSharedDatabase: "true"
-  portfolio-platform:enableTailscale: "true"
+  portfolio-platform:enableTailscale: "false"

@@ -81,7 +81,7 @@ export function createRds(name: string, inputs: RdsInputs): RdsOutputs {
     publiclyAccessible: false,
     skipFinalSnapshot: true, // Set to false for prod
     deletionProtection: false, // Set to true for prod
-    backupRetentionPeriod: 7,
+    backupRetentionPeriod: 1,
     backupWindow: "03:00-04:00",
     maintenanceWindow: "Mon:04:00-Mon:05:00",
     storageEncrypted: true,

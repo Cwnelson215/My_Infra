@@ -88,7 +88,7 @@ if (enableTailscale) {
 
 const logGroup = new aws.cloudwatch.LogGroup(`${name}-logs`, {
   name: `/ecs/${name}`,
-  retentionInDays: 14,
+  retentionInDays: 3,
   tags,
 });
 
